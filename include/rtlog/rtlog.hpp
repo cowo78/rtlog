@@ -24,12 +24,18 @@ namespace rtlog
  */
 void initialize(std::string const & log_directory, std::string const & log_file_name, uint32_t log_file_roll_size_mb);
 
-template<std::size_t PARAM_SIZE, std::size_t BUFFER_SIZE, typename CHAR_TYPE>
-class CLoggerT : public Singleton<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE>>
+struct ConcurrentQueueTraits : public moodycamel::ConcurrentQueueDefaultTraits
+{
+    static const size_t BLOCK_SIZE = 32;
+    static const size_t MAX_SUBQUEUE_SIZE = 64;
+};
+
+template<std::size_t PARAM_SIZE, std::size_t BUFFER_SIZE, typename CHAR_TYPE, typename QUEUE_TRAITS>
+class CLoggerT : public Singleton<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE, QUEUE_TRAITS>>
 {
     static_assert(PARAM_SIZE > 7);
-    friend class Singleton<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE>>;
-    friend class std::default_delete<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE>>;
+    friend class Singleton<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE, QUEUE_TRAITS>>;
+    friend class std::default_delete<CLoggerT<PARAM_SIZE, BUFFER_SIZE, CHAR_TYPE, QUEUE_TRAITS>>;
 
     // Cannot access thread id private member and need an ostream to format thread::id
     // so just revert to pthread_t
@@ -74,17 +80,17 @@ public:
         );
     }
 
-    moodycamel::ConcurrentQueue<rtlog::Argument>& arg_holders;
+    moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& arg_holders;
 
 protected:
-    CLoggerT(moodycamel::ConcurrentQueue<rtlog::Argument>& queue) : arg_holders(queue) {}
+    CLoggerT(moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& queue) : arg_holders(queue) {}
     ~CLoggerT() {}
 
 private:
 };
 
 /** Default logger */
-using CLogger = CLoggerT<8, 1024, char>;
+using CLogger = CLoggerT<8, 1024, char, ConcurrentQueueTraits>;
 
 inline bool is_logged(LogLevel level);
 }   // namespace rtlog

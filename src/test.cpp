@@ -18,22 +18,22 @@ bool is_logged(LogLevel level)
 }  // namespace rtlog
 
 
-
-class CLogConsumer
+template<typename QUEUE_TRAITS>
+class CLogConsumerT
 {
 protected:
-    moodycamel::ConcurrentQueue<rtlog::Argument>& m_Queue;
+    moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& m_Queue;
     std::chrono::microseconds m_PollInterval;
     rtlog::CFormatter m_Formatter;
     std::thread m_ConsumerThread;
     std::atomic_bool m_Stop;
 
 public:
-    CLogConsumer(moodycamel::ConcurrentQueue<rtlog::Argument>& queue, uint32_t poll_interval) :
+    CLogConsumerT(moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& queue, uint32_t poll_interval) :
         m_Queue(queue), m_PollInterval(poll_interval)
     {
         m_Stop.store(false);
-        m_ConsumerThread = std::thread(std::bind(&CLogConsumer::consume, this));
+        m_ConsumerThread = std::thread(std::bind(&CLogConsumerT<QUEUE_TRAITS>::consume, this));
     }
 
     void consume()
@@ -57,11 +57,11 @@ public:
         m_ConsumerThread.join();
     }
 };
-
+using CLogConsumer = CLogConsumerT<rtlog::ConcurrentQueueTraits>;
 
 int main(int argc, char* argv[])
 {
-    moodycamel::ConcurrentQueue<rtlog::Argument> main_queue;
+    moodycamel::ConcurrentQueue<rtlog::Argument, rtlog::ConcurrentQueueTraits> main_queue;
     rtlog::CFormatter formatter;
 
     rtlog::CLogger::initialize(main_queue);
@@ -74,7 +74,7 @@ int main(int argc, char* argv[])
 
     for (int i{0}; i < 100; i++) {
         for (int j{0}; j < 10; j++) {
-            LOG_INFO("asd", (i*10)+j);
+            LOG_INFO("User message", (i*10)+j);
             std::this_thread::sleep_for(
                 std::chrono::microseconds(uniform_dist(e1))
             );

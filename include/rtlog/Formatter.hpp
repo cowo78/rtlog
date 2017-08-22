@@ -44,7 +44,8 @@ public:
     { return m_Writer.c_str(); }
 
     /** Performs a message formatting and return internal pointer */
-    const char_type* format(moodycamel::ConcurrentQueue<rtlog::Argument>& queue)
+    template<typename QUEUE_TRAITS>
+    const char_type* format(moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& queue)
     {
         if (m_MessageCompleted) {
             m_Writer.clear();
