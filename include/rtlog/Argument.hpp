@@ -4,9 +4,13 @@
 
 #pragma once
 
+#include <array>
+
 #include <boost/any.hpp>
 
 #include <fmt/format.h>
+
+#include "../Traits.hpp"
 
 #ifndef DBG
 #define DBG() printf("%s:%d - %s\n", __FILE__, __LINE__, static_cast<const char*>(__PRETTY_FUNCTION__))
@@ -38,8 +42,11 @@ enum class E_ARG_TYPE : uint8_t
     C_STR_TYPE, CHAR_TYPE,
     LOG_INFO_TYPE, LOG_WARN_TYPE, LOG_CRIT_TYPE, LOG_LEVEL_TYPE,
     TIMEPOINT_TYPE,
+    END_MARKER_TYPE,
     UNKNOWN_TYPE
 };
+
+struct _ArrayEndMarker {};
 
 /** C++ type to E_ARG_TYPE enum type trait */
 template<typename T, int N = 0> struct ArgType;
@@ -64,7 +71,7 @@ template<> struct ArgType<LogCritType, 0> { static constexpr E_ARG_TYPE ARG_TYPE
 template<> struct ArgType<std::chrono::time_point<std::chrono::high_resolution_clock>, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::TIMEPOINT_TYPE; };
 //~ template<> struct ArgType<std::chrono::time_point<std::chrono::system_clock>, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::TIMEPOINT_TYPE; };
 //~ template<> struct ArgType<std::chrono::time_point<std::chrono::steady_clock>, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::TIMEPOINT_TYPE; };
-
+template<> struct ArgType<rtlog::_ArrayEndMarker, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::END_MARKER_TYPE; };
 
 /** E_ARG_TYPE enum to C++ type type trait */
 template<E_ARG_TYPE T> struct TypeArg;
@@ -81,6 +88,7 @@ template<> struct TypeArg<E_ARG_TYPE::C_STR_TYPE> { typedef const char* TYPE; };
 template<> struct TypeArg<E_ARG_TYPE::CHAR_TYPE> { typedef char TYPE; };
 template<> struct TypeArg<E_ARG_TYPE::LOG_LEVEL_TYPE> { typedef LogLevel TYPE; };
 template<> struct TypeArg<E_ARG_TYPE::TIMEPOINT_TYPE> { typedef std::chrono::time_point<std::chrono::high_resolution_clock> TYPE; };
+template<> struct TypeArg<E_ARG_TYPE::END_MARKER_TYPE> { typedef _ArrayEndMarker TYPE; };
 
 
 /** Efficiently store an arbitrary argument as boost::any and save the type for later usage.
@@ -98,11 +106,11 @@ public:
 
     template<typename ValueType> Argument& operator=(ValueType&& v)
     {
-        DBG();
         m_Type = ArgType<typename std::remove_reference<ValueType>::type>::ARG_TYPE;
         boost::any(static_cast<ValueType&&>(v)).swap(*this);
         return *this;
     }
+    using boost::any::operator=;
 
     Argument& swap(Argument& arg)
     {
@@ -118,8 +126,6 @@ public:
         // TODO: use FormatInt for integer types
         switch (m_Type) {
             case E_ARG_TYPE::NULL_TYPE:
-                // TODO: widen
-                os.operator<<('\n');
                 return os;
             case E_ARG_TYPE::INT64_TYPE:
                 os.operator<<(boost::any_cast<TypeArg<E_ARG_TYPE::INT64_TYPE>::TYPE>(*this));
@@ -172,6 +178,10 @@ public:
                     ).count()
                 );
                 break;
+            case E_ARG_TYPE::END_MARKER_TYPE:
+                // TODO: widen
+                os.operator<<("|\n");
+                return os;
             default:
                 break;
         }
@@ -180,7 +190,18 @@ public:
         return os;
     }
 
+    // TODO: for some reason it does not compile as standard function on gcc 7.2.0
+    template<typename T>
+    inline static bool is_type(const Argument& arg) { return arg.m_Type == ArgType<T, 0>::ARG_TYPE; }
+
     using boost::any::empty;
 };
+
+
+/** Holds a log message split in base components, still to be formatted */
+template<typename LOGGER_TRAITS>
+class ArgumentArrayT : public std::array<Argument, LOGGER_TRAITS::PARAM_SIZE> {};
+
+using ArgumentArray = ArgumentArrayT<rtlog::logger_traits>;
 
 }  // namespace rtlog
