@@ -4,69 +4,58 @@
 
 #pragma once
 
-#include <boost/static_assert.hpp>
-
 #include "Argument.hpp"
 #include "../concurrentqueue.h"
+#include "../Traits.hpp"
 
 namespace rtlog {
-
-//~ template<unsigned int N>
-//~ struct ArgumentHolder
-//~ {
-    //~ constexpr static unsigned int size = N;
-    //~ LogLevel log_level;
-    //~ Argument arguments[N];
-//~ };
 
 /** Pull rtlog::Argument instances from the ConcurrentQueue and format the result in an internal buffer.
  *  No memory allocations.
  *  Internal buffer size and char type as template parameters
  */
-template<std::size_t BUFFER_SIZE, typename CHAR_TYPE>
+template<typename LOGGER_TRAITS, typename QUEUE_TRAITS>
 class CFormatterT
 {
 protected:
     /** Actual formatter, fixed buffer */
-    fmt::BasicArrayWriter<CHAR_TYPE> m_Writer;
+    fmt::BasicArrayWriter<typename LOGGER_TRAITS::CHAR_TYPE> m_Writer;
     /** Formatter buffer */
-    CHAR_TYPE m_Buffer[BUFFER_SIZE];
-    Argument m_Argument;
-    bool m_MessageCompleted;
+    typename LOGGER_TRAITS::CHAR_TYPE m_Buffer[LOGGER_TRAITS::BUFFER_SIZE];
+    rtlog::ArgumentArrayT<LOGGER_TRAITS> m_ArgumentArray;
+    rtlog::Argument m_Argument;
 
 public:
-    typedef CHAR_TYPE char_type;
-    constexpr static size_t buffer_size = BUFFER_SIZE;
+    typedef typename LOGGER_TRAITS::CHAR_TYPE char_type;
+    constexpr static size_t buffer_size = LOGGER_TRAITS::BUFFER_SIZE;
 
-    CFormatterT() : m_Writer(m_Buffer, BUFFER_SIZE), m_MessageCompleted(false) {};
+    CFormatterT() : m_Writer(m_Buffer, LOGGER_TRAITS::BUFFER_SIZE) {};
 
     const char_type* get() const noexcept
     { return m_Writer.c_str(); }
 
-    /** Performs a message formatting and return internal pointer */
-    template<typename QUEUE_TRAITS>
-    const char_type* format(moodycamel::ConcurrentQueue<rtlog::Argument, QUEUE_TRAITS>& queue)
+    /** Performs a single message formatting and return internal pointer */
+    const char_type* format(moodycamel::ConcurrentQueue<rtlog::ArgumentArrayT<LOGGER_TRAITS>, QUEUE_TRAITS>& queue)
     {
-        if (m_MessageCompleted) {
+        if (queue.try_dequeue(m_ArgumentArray)) {
+            // Dequeue a log message block
+            // It SHOULD be complete but it's not guaranteed
             m_Writer.clear();
-            m_MessageCompleted = false;
-        }
-        while (queue.try_dequeue(m_Argument)) {
             // TODO: should be writer << argument
-            m_Argument.operator<<(m_Writer);
-            if (m_Argument.empty()) {
-                // Got a final nullptr, treated as EOL
-                m_MessageCompleted = true;
-                return m_Writer.c_str();
+            for (auto& elem : m_ArgumentArray) {
+                if (elem.empty())
+                    return NULL;  // Encountered an empty element before end marker, message incomplete
+
+                elem.operator <<(m_Writer);
+
+                if (Argument::is_type<rtlog::_ArrayEndMarker>(elem))
+                    return m_Writer.c_str();  // End of message found
             }
         }
-        return NULL;
+        return NULL;  // No message enqueued
     }
-
-protected:
 };
 
-using CFormatter = CFormatterT<1024, char>;
+using CFormatter = CFormatterT<rtlog::logger_traits, rtlog::ConcurrentQueueTraits>;
 
 }  // namespace rtlog
-
