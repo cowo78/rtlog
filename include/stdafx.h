@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <future>
 #include <iostream>
 #include <random>
 #include <thread>
