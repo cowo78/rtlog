@@ -100,17 +100,21 @@ inline bool is_logged(LogLevel level);
 }   // namespace rtlog
 
 // TODO: enqueue PID instead of thread ID
-#define RTLOG(LVL, ...) \
-{\
-    rtlog::CLogger::get().write( \
-    std::move(std::chrono::high_resolution_clock::now()), \
-    std::move(getpid()), \
-    std::move(LVL), std::move(__FILE__), std::move(__LINE__), std::move(__func__), ##__VA_ARGS__) \
-}
+#define RTLOG(LVL, ...)                                 \
+    rtlog::CLogger::get().write(                        \
+        std::move(                                      \
+            std::chrono::high_resolution_clock::now()), \
+            std::move(pthread_self()),                  \
+            std::move(LVL),                             \
+            std::move(__FILE__),                        \
+            std::move(__LINE__),                        \
+            std::move(__func__),                        \
+            ##__VA_ARGS__                               \
+    )
 
 #define LOG_INFO(...) \
-    rtlog::is_logged(rtlog::LogLevel::INFO) && RTLOG(rtlog::LogLevel::INFO, ##__VA_ARGS__)
+    do { rtlog::is_logged(rtlog::LogLevel::INFO) && RTLOG(rtlog::LogLevel::INFO, ##__VA_ARGS__); } while (0);
 #define LOG_WARN(...) \
-    rtlog::is_logged(rtlog::LogLevel::WARN) && RTLOG(rtlog::LogLevel::WARN, ##__VA_ARGS__)
+    do { rtlog::is_logged(rtlog::LogLevel::WARN) && RTLOG(rtlog::LogLevel::WARN, ##__VA_ARGS__); } while (0);
 #define LOG_CRIT(...) \
-    rtlog::is_logged(rtlog::LogLevel::CRIT) && RTLOG(rtlog::LogLevel::CRIT, ##__VA_ARGS__)
+    do { rtlog::is_logged(rtlog::LogLevel::CRIT) && RTLOG(rtlog::LogLevel::CRIT, ##__VA_ARGS__); } while (0);
