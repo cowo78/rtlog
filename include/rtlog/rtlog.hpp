@@ -4,6 +4,12 @@
 
 #pragma once
 
+#include <boost/predef.h>
+#include <boost/preprocessor/stringize.hpp>
+
+#include <sys/types.h>
+#include <sys/syscall.h>
+
 #include "Argument.hpp"
 #include "Formatter.hpp"
 #include "Consumer.hpp"
@@ -51,7 +57,7 @@ public:
         std::chrono::time_point<C>&& time_point,
         pthread_t&& thread_id,
         rtlog::LogLevel&& level,
-        const char *file, int line, const char *function,
+        const char* &&position,
         T0&& arg0, Args&&... args
     )
     {
@@ -62,9 +68,7 @@ public:
         _write(p, enqueuedArguments, time_point);
         _write(p, enqueuedArguments, thread_id);
         _write(p, enqueuedArguments, level);
-        _write(p, enqueuedArguments, file);
-        _write(p, enqueuedArguments, line);
-        _write(p, enqueuedArguments, function);
+        _write(p, enqueuedArguments, position);
         _write(p, enqueuedArguments, arg0, args...);
         _write(p, enqueuedArguments, _ArrayEndMarker());
 
@@ -97,20 +101,75 @@ protected:
 using CLogger = CLoggerT<rtlog::logger_traits, rtlog::ConcurrentQueueTraits>;
 
 inline bool is_logged(LogLevel level);
+
+
+#if defined(BOOST_LIB_C_GNU) && defined(BOOST_OS_LINUX) && defined(USE_INTERNAL_GETTID)
+size_t __find_thread_id_offset_thread()
+{
+    pid_t tid((pid_t)syscall(SYS_gettid));
+    uint8_t* threadmem = (uint8_t*)pthread_self();
+    size_t offset(0);
+    do {
+        if (*(pid_t*)(threadmem + offset) == tid)
+            break;
+    } while (++offset);  // Yes, SEGV ahead
+
+    return offset;
+}
+
+// Spawn a thread, search the pthread_self structure for the LWP ID and return it
+size_t __find_thread_id_offset()
+{
+    return std::async(__find_thread_id_offset_thread).get();
+}
+
+extern size_t __thread_id_offset_linux_glibc;
+
+/** Horrible hack.
+ *  The pthread_t structure is an opaque struct defined in glibc/nptl/descr.h
+ *  Depending on various compilation options it may change in size and of course
+ *  it's totally dependent on architecture.
+ *  It's possible to use gettid() system call to get the LWP (Thread) ID but of course
+ *  at the expense of a syscall.
+ *  The basic idea is just to spawn a new thread, get the pthread_t opaque structure and search
+ *  for the LWP ID obtained by the gettid() syscall.
+ *  Of course YMMV and it's definitely possible to get a SEGV during startup
+ */
+inline pid_t pthread_gettid_np(void)
+{
+    return *(pid_t*)(((char*)pthread_self()) + __thread_id_offset_linux_glibc);
+}
+
+#endif  // BOOST_LIB_C_GNU && BOOST_OS_LINUX
 }   // namespace rtlog
 
-// TODO: enqueue PID instead of thread ID
+#define RTLOG_NOW() std::chrono::high_resolution_clock::now()
+#define RTLOG_POSITION() BOOST_PP_STRINGIZE([) __FILE__ BOOST_PP_STRINGIZE(:) BOOST_PP_STRINGIZE(__LINE__) BOOST_PP_STRINGIZE(])
+
+/** pthread_self() is a simple function call implemented in assembler
+ *  gettid is a full system call like getpid
+ *  pthread_self returns the address of the pthread_t structure, not the real thread ID
+ */
+#if defined(USE_PTHREAD_SELF)
+#   define RTLOG_THREAD_ID() pthread_self()
+#elif defined(USE_SYS_GETTID)
+#   define RTLOG_THREAD_ID() syscall(SYS_gettid)
+#elif defined(USE_GETPID)
+#   define RTLOG_THREAD_ID() getpid()
+#elif defined(USE_INTERNAL_GETTID)
+#   define RTLOG_THREAD_ID() rtlog::pthread_gettid_np()
+#endif
+
+
 #define RTLOG(LVL, ...)                                 \
     rtlog::CLogger::get().write(                        \
-        std::move(                                      \
-            std::chrono::high_resolution_clock::now()), \
-            std::move(pthread_self()),                  \
-            std::move(LVL),                             \
-            std::move(__FILE__),                        \
-            std::move(__LINE__),                        \
-            std::move(__func__),                        \
-            ##__VA_ARGS__                               \
+        std::move(RTLOG_NOW()),                         \
+        std::move(RTLOG_THREAD_ID()),                   \
+        std::move(LVL),                                 \
+        std::move(RTLOG_POSITION()),                    \
+        ##__VA_ARGS__                                   \
     )
+
 
 #define LOG_INFO(...) \
     do { rtlog::is_logged(rtlog::LogLevel::INFO) && RTLOG(rtlog::LogLevel::INFO, ##__VA_ARGS__); } while (0);
