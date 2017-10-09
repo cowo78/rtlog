@@ -46,7 +46,7 @@ public:
                 if (elem.empty())
                     return NULL;  // Encountered an empty element before end marker, message incomplete
 
-                elem.operator <<(m_Writer);
+                m_Writer << elem;
 
                 if (Argument::is_type<rtlog::_ArrayEndMarker>(elem))
                     return m_Writer.c_str();  // End of message found
