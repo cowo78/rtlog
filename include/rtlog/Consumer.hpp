@@ -60,6 +60,6 @@ public:
         m_Stream.close();
     }
 };
-using CLogConsumer = CLogConsumerT<rtlog::logger_traits, rtlog::ConcurrentQueueTraits>;
+using CLogConsumer = CLogConsumerT<rtlog::LoggerTraits, rtlog::ConcurrentQueueTraits>;
 
 }  // namespace rtlog
