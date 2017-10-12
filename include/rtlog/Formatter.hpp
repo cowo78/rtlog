@@ -56,6 +56,6 @@ public:
     }
 };
 
-using CFormatter = CFormatterT<rtlog::logger_traits, rtlog::ConcurrentQueueTraits>;
+using CFormatter = CFormatterT<rtlog::LoggerTraits, rtlog::ConcurrentQueueTraits>;
 
 }  // namespace rtlog
