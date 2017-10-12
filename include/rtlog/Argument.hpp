@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cwchar>
+
 #include <array>
 #include <chrono>
 
@@ -13,24 +15,7 @@
 
 #include "../Traits.hpp"
 
-#ifndef DBG
-#define DBG() printf("%s:%d - %s\n", __FILE__, __LINE__, static_cast<const char*>(__PRETTY_FUNCTION__))
-#endif
-
 namespace rtlog {
-
-enum LogLevel : int { INFO = 0, WARN = 1, CRIT = 2 };
-
-template<LogLevel L> struct LogLevelType {};
-using LogInfoType = LogLevelType<LogLevel::INFO>;
-using LogWarnType = LogLevelType<LogLevel::WARN>;
-using LogCritType = LogLevelType<LogLevel::CRIT>;
-
-template<LogLevel L> struct LogLevelSignature;
-template<> struct LogLevelSignature<LogLevel::INFO> { constexpr static const char* signature = "INFO"; };
-template<> struct LogLevelSignature<LogLevel::WARN> { constexpr static const char* signature = "WARN"; };
-template<> struct LogLevelSignature<LogLevel::CRIT> { constexpr static const char* signature = "CRIT"; };
-
 
 /** All supported types */
 enum class E_ARG_TYPE : uint8_t
@@ -46,12 +31,11 @@ enum class E_ARG_TYPE : uint8_t
     END_MARKER_TYPE,
     UNKNOWN_TYPE
 };
-
+/** Placeholder to specify the end of parameters pack */
 struct _ArrayEndMarker {};
 
 /** C++ type to E_ARG_TYPE enum type trait */
 template<typename T, int N = 0> struct ArgType;
-
 template<> struct ArgType<std::nullptr_t, 0> { constexpr static E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::NULL_TYPE; };
 template<> struct ArgType<int8_t, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::INT8_TYPE; };
 template<> struct ArgType<uint8_t, 0> { static constexpr E_ARG_TYPE ARG_TYPE = E_ARG_TYPE::UINT8_TYPE; };
@@ -93,11 +77,13 @@ template<> struct TypeArg<E_ARG_TYPE::LOG_LEVEL_TYPE> { typedef LogLevel TYPE; }
 template<> struct TypeArg<E_ARG_TYPE::TIMEPOINT_TYPE> { typedef std::chrono::time_point<std::chrono::high_resolution_clock> TYPE; };
 template<> struct TypeArg<E_ARG_TYPE::END_MARKER_TYPE> { typedef _ArrayEndMarker TYPE; };
 
+// Forward declarations
 class Argument;
 template<typename T> fmt::BasicWriter<T>& operator<<(fmt::BasicWriter<T>&, Argument const&);
 
 /** Efficiently store an arbitrary argument as boost::any and save the type for later usage.
  *  Supports stream insertion based on saved type.
+ *  TODO: use boost::any directly
  */
 class Argument : public boost::any
 {
@@ -189,29 +175,27 @@ fmt::BasicWriter<Char>& operator<<(fmt::BasicWriter<Char>& os, Argument const& a
             }
             break;
         case E_ARG_TYPE::TIMEPOINT_TYPE:
-            // TODO: better time formatting
+            // TODO: better/configurable time formatting
             os <<
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     boost::any_cast<TypeArg<E_ARG_TYPE::TIMEPOINT_TYPE>::TYPE>(arg).time_since_epoch()
                 ).count();
             break;
         case E_ARG_TYPE::END_MARKER_TYPE:
-            // TODO: widen
-            os << "|\n";
-            return os;
+            // End of parameters list: add a newline
+            return os << typename std::conditional<std::is_same<Char, wchar_t>::value, wchar_t, char>::type ('\n');
         default:
             return os;
     }
-    // TODO: widen
-    os << " ";
-    return os;
-}
+    // By default add a space
+    return os << typename std::conditional<std::is_same<Char, wchar_t>::value, wchar_t, char>::type (' ');
+}  // ~operator<<
 
 
 /** Holds a log message split in base components, still to be formatted */
 template<typename LOGGER_TRAITS>
 class ArgumentArrayT : public std::array<Argument, LOGGER_TRAITS::PARAM_SIZE> {};
 
-using ArgumentArray = ArgumentArrayT<rtlog::logger_traits>;
+using ArgumentArray = ArgumentArrayT<rtlog::LoggerTraits>;
 
 }  // namespace rtlog
