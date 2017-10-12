@@ -33,7 +33,7 @@ LIBSD :=
 
 WARNINGS := -Winvalid-pch -Wno-unknown-pragmas -Wall
 WARNINGSD := -Winvalid-pch -Wno-unknown-pragmas -Wall
-DEFINES := -D_MT -DNDEBUG
+DEFINES := -D_MT -DNDEBUG -DUSE_INTERNAL_GETTID
 DEFINESD :=
 CFLAGS := -pthread -fno-strict-aliasing -fwrapv -fexceptions -fPIC -O2 -pipe -g $(WARNINGS) -Wstrict-prototypes $(DEFINES) $(INCLUDE)
 CFLAGSD := -pthread -fno-strict-aliasing -fwrapv -fexceptions -fPIC -O2 -pipe -ggdb $(WARNINGSD) -Wstrict-prototypes $(DEFINESD) $(INCLUDE)
@@ -55,18 +55,18 @@ lib_sources := $(shell ls -t src/|grep -v stdafx|grep cpp | sed -e 's/src\///')
 lib_objects := $(lib_sources:%.cpp=$(OBJDIR)/%.o)
 lib_objectsd := $(lib_sources:%.cpp=$(OBJDIRD)/%.o)
 
-sharedLib = $(BINDIR)/libCopanC.so
-sharedLibD = $(BINDIR)/libCopanC-d.so
-staticLib = $(BINDIR)/libCopanC.a
-staticLibD = $(BINDIR)/libCopanC-d.a
+sharedLib = $(BINDIR)/librtlog.so
+sharedLibD = $(BINDIR)/librtlog-d.so
+staticLib = $(BINDIR)/librtlog.a
+staticLibD = $(BINDIR)/librtlog-d.a
 gchIncludeD = $(INCDIR)/stdafx.h.gch
 
 .PHONY: all debug static static-debug setup clean distclean
 
-all: setup test
+all: setup $(staticLib)
 debug: setupd
-static: setup_static
-static-debug: setupd_static
+static: setup_static $(staticLib)
+static-debug: setupd_static $(staticLibD)
 
 setup:
 	mkdir -p $(OBJDIR)
@@ -84,8 +84,10 @@ clean: setup setupd
 distclean: clean
 	$(RM) -rf $(STDAFXDIR)
 
-test: $(OBJDIR)/test.o
-	$(CXX) $(CXXFLAGS) $(LFLAGS) -o $@ $(OBJDIR)/test.o $(LIBS)
+$(OBJDIR)/example1.o: examples/example1.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+example1: $(STDAFXDIR)/stdafx.h.gch $(staticLib) $(OBJDIR)/example1.o
+	$(CXX) $(CXXFLAGS) $(LFLAGS) -o $(BINDIR)/$@ $(OBJDIR)/example1.o $(LIBS) -L$(BINDIR) -lrtlog
 
 #~ $(sharedLib): override CXXFLAGS += -DBUILDING_DLL
 #~ $(sharedLib): $(lib_objects)
@@ -95,11 +97,11 @@ test: $(OBJDIR)/test.o
 #~ $(sharedLibD): $(lib_objectsd)
 #~ 	$(CXX) $(CXXFLAGSD) $(LFLAGSD) -shared -o $@ $(lib_objectsd) $(LIBSD)
 
-#~ $(staticLib): $(lib_objects)
-#~ 	$(AR) crv $@ $(lib_objects)
+$(staticLib): $(lib_objects)
+	$(AR) crv $@ $(lib_objects)
 
-#~ $(staticLibD): $(lib_objectsd)
-#~ 	$(AR) crv $@ $(lib_objectsd)
+$(staticLibD): $(lib_objectsd)
+	$(AR) crv $@ $(lib_objectsd)
 
 # Precompiled headers
 $(STDAFXDIR)/stdafx.h.gch: $(INCDIR)/stdafx.h
