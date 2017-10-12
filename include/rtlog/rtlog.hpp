@@ -4,17 +4,13 @@
 
 #pragma once
 
-#include <boost/predef.h>
-#include <boost/preprocessor/stringize.hpp>
-
-#include <sys/types.h>
-#include <sys/syscall.h>
-
 #include "Argument.hpp"
-#include "Formatter.hpp"
 #include "Consumer.hpp"
-#include "../Singleton.hpp"
+#include "Formatter.hpp"
+#include "Levels.hpp"
 #include "../concurrentqueue.h"
+#include "../pthread_gettid_np.hpp"
+#include "../Singleton.hpp"
 #include "../Traits.hpp"
 
 namespace rtlog
@@ -48,14 +44,41 @@ class CLoggerT : public Singleton<CLoggerT<LOGGER_TRAITS, QUEUE_TRAITS>>
 public:
     constexpr static std::size_t param_size = LOGGER_TRAITS::PARAM_SIZE;
     constexpr static std::size_t buffer_size = LOGGER_TRAITS::BUFFER_SIZE;
+    constexpr static LogLevel DEFAULT_LEVEL = LOGGER_TRAITS::DEFAULT_LEVEL;
+
     typedef typename LOGGER_TRAITS::CHAR_TYPE char_type;
     typedef QUEUE_TRAITS queue_traits;
 
     /** Save some arguments for later formatting */
-    template<typename C, typename T0, typename... Args>
+    template<typename TID, typename T0, typename... Args>
+    inline bool write(
+        TID&& thread_id,
+        rtlog::LogLevel&& level,
+        const char* &&position,
+        T0&& arg0, Args&&... args
+    )
+    {
+        if (static_cast<std::underlying_type<LogLevel>::type>(level) < m_LogLevel.load(std::memory_order_relaxed))
+            return true;
+
+        static_assert(sizeof...(Args) <= (LOGGER_TRAITS::PARAM_SIZE - 6 - 1));
+        // Make sure all the POD are 0-initialized
+        ArgumentArrayT<LOGGER_TRAITS> p = {};
+        std::size_t enqueuedArguments = {};
+        _write(p, enqueuedArguments, thread_id);
+        _write(p, enqueuedArguments, level);
+        _write(p, enqueuedArguments, position);
+        _write(p, enqueuedArguments, arg0, args...);
+        _write(p, enqueuedArguments, _ArrayEndMarker());
+
+        return (m_ArgumentQueue.try_enqueue(std::move(p)));
+    }
+
+    /** Save some arguments for later formatting */
+    template<typename C, typename TID, typename T0, typename... Args>
     inline bool write(
         std::chrono::time_point<C>&& time_point,
-        pthread_t&& thread_id,
+        TID&& thread_id,
         rtlog::LogLevel&& level,
         const char* &&position,
         T0&& arg0, Args&&... args
@@ -89,61 +112,24 @@ public:
 
 protected:
     CLoggerT(moodycamel::ConcurrentQueue<ArgumentArrayT<LOGGER_TRAITS>, QUEUE_TRAITS>& queue) :
-        m_ArgumentQueue(queue)
+        m_LogLevel(DEFAULT_LEVEL), m_ArgumentQueue(queue)
     {}
     ~CLoggerT() {}
+
+    /** Current log level */
+    std::atomic<std::underlying_type<LogLevel>::type> m_LogLevel;
 
     /** Each queue element is made of an array of log message pieces */
     moodycamel::ConcurrentQueue<ArgumentArrayT<LOGGER_TRAITS>, QUEUE_TRAITS>& m_ArgumentQueue;
 };
 
 /** Default logger */
-using CLogger = CLoggerT<rtlog::logger_traits, rtlog::ConcurrentQueueTraits>;
+using CLogger = CLoggerT<rtlog::LoggerTraits, rtlog::ConcurrentQueueTraits>;
 
-inline bool is_logged(LogLevel level);
+//~ inline bool is_logged(LogLevel level);
 
-
-#if defined(BOOST_LIB_C_GNU) && defined(BOOST_OS_LINUX) && defined(USE_INTERNAL_GETTID)
-size_t __find_thread_id_offset_thread()
-{
-    pid_t tid((pid_t)syscall(SYS_gettid));
-    uint8_t* threadmem = (uint8_t*)pthread_self();
-    size_t offset(0);
-    do {
-        if (*(pid_t*)(threadmem + offset) == tid)
-            break;
-    } while (++offset);  // Yes, SEGV ahead
-
-    return offset;
-}
-
-// Spawn a thread, search the pthread_self structure for the LWP ID and return it
-size_t __find_thread_id_offset()
-{
-    return std::async(__find_thread_id_offset_thread).get();
-}
-
-extern size_t __thread_id_offset_linux_glibc;
-
-/** Horrible hack.
- *  The pthread_t structure is an opaque struct defined in glibc/nptl/descr.h
- *  Depending on various compilation options it may change in size and of course
- *  it's totally dependent on architecture.
- *  It's possible to use gettid() system call to get the LWP (Thread) ID but of course
- *  at the expense of a syscall.
- *  The basic idea is just to spawn a new thread, get the pthread_t opaque structure and search
- *  for the LWP ID obtained by the gettid() syscall.
- *  Of course YMMV and it's definitely possible to get a SEGV during startup
- */
-inline pid_t pthread_gettid_np(void)
-{
-    return *(pid_t*)(((char*)pthread_self()) + __thread_id_offset_linux_glibc);
-}
-
-#endif  // BOOST_LIB_C_GNU && BOOST_OS_LINUX
 }   // namespace rtlog
 
-#define RTLOG_NOW() std::chrono::high_resolution_clock::now()
 #define RTLOG_POSITION() BOOST_PP_STRINGIZE([) __FILE__ BOOST_PP_STRINGIZE(:) BOOST_PP_STRINGIZE(__LINE__) BOOST_PP_STRINGIZE(])
 
 /** pthread_self() is a simple function call implemented in assembler
@@ -157,9 +143,12 @@ inline pid_t pthread_gettid_np(void)
 #elif defined(USE_GETPID)
 #   define RTLOG_THREAD_ID() getpid()
 #elif defined(USE_INTERNAL_GETTID)
-#   define RTLOG_THREAD_ID() rtlog::pthread_gettid_np()
+#   define RTLOG_THREAD_ID() rtlog::details::pthread_gettid_np()
 #endif
 
+#if defined(USE_TIMEPOINT)
+
+#define RTLOG_NOW() std::chrono::high_resolution_clock::now()
 
 #define RTLOG(LVL, ...)                                 \
     rtlog::CLogger::get().write(                        \
@@ -169,11 +158,20 @@ inline pid_t pthread_gettid_np(void)
         std::move(RTLOG_POSITION()),                    \
         ##__VA_ARGS__                                   \
     )
+#else
+#define RTLOG(LVL, ...)                                 \
+    rtlog::CLogger::get().write(                        \
+        std::move(RTLOG_THREAD_ID()),                   \
+        std::move(LVL),                                 \
+        std::move(RTLOG_POSITION()),                    \
+        ##__VA_ARGS__                                   \
+    )
+#endif
 
 
 #define LOG_INFO(...) \
-    do { rtlog::is_logged(rtlog::LogLevel::INFO) && RTLOG(rtlog::LogLevel::INFO, ##__VA_ARGS__); } while (0);
+    do { RTLOG(rtlog::LogLevel::INFO, ##__VA_ARGS__); } while (0);
 #define LOG_WARN(...) \
-    do { rtlog::is_logged(rtlog::LogLevel::WARN) && RTLOG(rtlog::LogLevel::WARN, ##__VA_ARGS__); } while (0);
+    do { RTLOG(rtlog::LogLevel::WARN, ##__VA_ARGS__); } while (0);
 #define LOG_CRIT(...) \
-    do { rtlog::is_logged(rtlog::LogLevel::CRIT) && RTLOG(rtlog::LogLevel::CRIT, ##__VA_ARGS__); } while (0);
+    do { RTLOG(rtlog::LogLevel::CRIT, ##__VA_ARGS__); } while (0);
