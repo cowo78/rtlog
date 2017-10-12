@@ -22,7 +22,6 @@ protected:
     fmt::BasicArrayWriter<typename LOGGER_TRAITS::CHAR_TYPE> m_Writer;
     /** Formatter buffer */
     typename LOGGER_TRAITS::CHAR_TYPE m_Buffer[LOGGER_TRAITS::BUFFER_SIZE];
-    rtlog::ArgumentArrayT<LOGGER_TRAITS> m_ArgumentArray;
     rtlog::Argument m_Argument;
 
 public:
@@ -35,22 +34,17 @@ public:
     { return m_Writer.c_str(); }
 
     /** Performs a single message formatting and return internal pointer */
-    const char_type* format(moodycamel::ConcurrentQueue<rtlog::ArgumentArrayT<LOGGER_TRAITS>, QUEUE_TRAITS>& queue)
+    const char_type* format(rtlog::ArgumentArrayT<LOGGER_TRAITS>& argument_array)
     {
-        if (queue.try_dequeue(m_ArgumentArray)) {
-            // Dequeue a log message block
-            // It SHOULD be complete but it's not guaranteed
-            m_Writer.clear();
-            // TODO: should be writer << argument
-            for (auto& elem : m_ArgumentArray) {
-                if (elem.empty())
-                    return NULL;  // Encountered an empty element before end marker, message incomplete
+        m_Writer.clear();
+        for (auto& elem : argument_array) {
+            if (elem.empty())
+                break;  // Encountered an empty element before end marker, message incomplete
 
-                m_Writer << elem;
+            m_Writer << elem;
 
-                if (Argument::is_type<rtlog::_ArrayEndMarker>(elem))
-                    return m_Writer.c_str();  // End of message found
-            }
+            if (Argument::is_type<rtlog::_ArrayEndMarker>(elem))
+                return m_Writer.c_str();  // End of message found
         }
         return NULL;  // No message enqueued
     }
