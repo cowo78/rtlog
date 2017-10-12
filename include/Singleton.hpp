@@ -11,11 +11,12 @@ public:
     typedef T derived_type;
 
     template<typename... Args>
-    static inline void initialize(Args& ... args)
+    static inline T& initialize(const Args& ... args)
     {
         derived_type* p(new derived_type(args...));
         instance.reset(p);
         atomic_rtlogger.store(p, std::memory_order_seq_cst);
+        return *p;
     }
     static inline void destroy() { instance.reset(); }
     static inline T& get() { return *instance; }
